@@ -21,7 +21,14 @@ if [ "$#" -gt 1 ]; then
     exit 2
 fi
 
-PIP_CONF_PATH=$HOME/.pip/pip.conf
+# Some base images ship a Python without pip; say so rather than dying on "pip: not found"
+# halfway through, since the fix is to bootstrap pip before calling this script.
+if ! command -v pip > /dev/null; then
+    echo "$0: pip is not on PATH; bootstrap it before calling this script" >&2
+    exit 2
+fi
+
+PIP_CONF_PATH=${HOME:?$0: HOME must be set}/.pip/pip.conf
 mkdir -p "$(dirname "$PIP_CONF_PATH")"
 # break-system-packages is inert on images without an EXTERNALLY-MANAGED marker, so it is
 # set unconditionally rather than per-project.

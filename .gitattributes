@@ -1,0 +1,2 @@
+# Keep the helpers LF-only: a CRLF shebang fails as "bad interpreter: /bin/bash^M".
+*.sh text eol=lf
