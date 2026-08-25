@@ -43,7 +43,9 @@ services:
     build:
       context: .
       additional_contexts:
-        build_common: https://github.com/liboyin/docker-build-common.git#v1.0.0
+        # Set BUILD_COMMON_CONTEXT in .env to a local clone to build offline, or to
+        # test a change here before tagging it.
+        build_common: "${BUILD_COMMON_CONTEXT:-https://github.com/liboyin/docker-build-common.git#v1.0.0}"
       args:
         # Optional caching proxies, interpolated from .env. Default to empty (direct
         # internet), so the image builds on any machine without extra configuration.
@@ -51,27 +53,41 @@ services:
         PYPI_PROXY: ${PYPI_PROXY:-}
 ```
 
-The Dockerfile copies the helpers out of that context and calls them:
+The Dockerfile mounts that context for the length of a `RUN` and calls the helpers:
 
 ```dockerfile
 ARG APT_PROXY
 ARG PYPI_PROXY
 
-COPY --from=build_common apt_install.sh pip_install.sh /build-common/
-
-RUN /build-common/apt_install.sh curl ffmpeg git
-RUN /build-common/pip_install.sh requirements.txt
+RUN --mount=type=bind,from=build_common,target=/build-common \
+    /build-common/apt_install.sh curl ffmpeg git
+RUN --mount=type=bind,from=build_common,target=/build-common \
+    /build-common/pip_install.sh requirements.txt
 ```
 
-Copy the helpers **outside** the project workspace when the project has a dev container
-that bind-mounts the host workspace over it, or the mount will shadow them.
+A bind mount rather than `COPY` because the helpers are build-time only: nothing is
+added to a layer, nothing is left in the shipped image, and there is no destination
+path to collide with a dev container's workspace mount. The mounted content still
+counts toward the `RUN` cache key, so bumping the pin still rebuilds. `COPY --from=build_common`
+works too — the helpers are stored mode `755` and the exec bit survives — if a project
+would rather have them on disk.
+
+Pass apt packages as separate arguments, never as one quoted string.
 
 Anything project-specific — extra `apt` steps, bootstrapping pip, `pip install -e .` —
 stays in the project's own Dockerfile as separate `RUN` lines.
 
-Pin to a tag for readability, or to a full 40-character commit SHA where the build must
-be reproducible. A moved tag resolves to a different commit and correctly invalidates
-the build cache; the tag itself is mutable, which is the trade-off.
+### Pinning
+
+Pin to an immutable tag for readability, or to a full 40-character commit SHA. Never
+pin to a branch or a floating major: that would silently change every consumer's image.
+
+BuildKit keys its cache on the *resolved* commit, so a moved tag correctly invalidates
+the cache rather than serving a stale one. The cost is that a non-SHA ref is re-resolved
+against the remote on every build, making `github.com` reachability a hard build
+dependency — one that `APT_PROXY`/`PYPI_PROXY` do **not** cover, because BuildKit
+fetches the context itself. A full SHA needs no such lookup once the snapshot is warm,
+and `BUILD_COMMON_CONTEXT` pointed at a local clone avoids the network entirely.
 
 The repository must be public, or BuildKit needs Git credentials on every machine that
 builds. It contains no secrets: proxy addresses live in each project's gitignored `.env`.
