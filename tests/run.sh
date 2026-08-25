@@ -20,12 +20,17 @@ APT_CONF=/etc/apt/apt.conf.d/01proxy
 
 failures=0
 
+# Pull up front so a first-run pull cannot interleave with a case.
+docker pull -q "$IMAGE" > /dev/null
+
 # Runs a shell snippet in a container with the helpers mounted read-only at /build-common,
-# forwarding APT_PROXY and PYPI_PROXY only when they are set in this shell.
+# forwarding APT_PROXY and PYPI_PROXY only when they are set in this shell. Only the
+# snippet's stdout is returned: docker's own chatter would otherwise be compared against
+# the expected value.
 in_container() {
     docker run --rm -v "$REPO_DIR:/build-common:ro" \
         ${APT_PROXY+-e APT_PROXY} ${PYPI_PROXY+-e PYPI_PROXY} \
-        "$IMAGE" bash -c "$1" 2>&1
+        "$IMAGE" bash -c "$1" 2>/dev/null
 }
 
 # assert_eq <description> <expected> <actual>
