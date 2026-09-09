@@ -6,8 +6,9 @@
 # Usage:
 #   pip_install.sh [lock-file]
 #
-# Passing a lock file installs it; the file must exist and be non-empty, otherwise the
-# build fails rather than silently producing an image with unpinned dependencies.
+# Passing a lock file installs it; the file must exist, otherwise the build fails rather
+# than silently producing an image with unpinned dependencies. An existing but empty lock
+# file is treated as "nothing to install" and skipped rather than failing the build.
 # Omitting the argument configures pip only, for projects that have no lock file.
 #
 # Environment:
@@ -52,11 +53,15 @@ fi
 cat "$PIP_CONF_PATH"
 
 if [ "$#" -eq 1 ]; then
-    if [ ! -s "$1" ]; then
-        echo "$0: lock file '$1' is missing or empty" >&2
+    if [ ! -f "$1" ]; then
+        echo "$0: lock file '$1' does not exist" >&2
         exit 1
     fi
-    pip install -r "$1"
+    if [ ! -s "$1" ]; then
+        echo "$0: lock file '$1' is empty, skipping install"
+    else
+        pip install -r "$1"
+    fi
 fi
 
 # Remove pip cache
