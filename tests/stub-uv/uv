@@ -1,0 +1,27 @@
+#!/bin/bash
+#
+# Stand-in for uv in the uv_install.sh tests: records each invocation's arguments and the
+# uv-related environment to $STUB_UV_LOG, and makes `export` write a minimal requirements
+# file (or one with no packages when STUB_EXPORT_EMPTY is set). No network access.
+
+set -euo pipefail
+
+log=${STUB_UV_LOG:-/tmp/uv.log}
+{
+    echo "args: $*"
+    echo "env: UV_DEFAULT_INDEX=${UV_DEFAULT_INDEX-<unset>} UV_INSECURE_HOST=${UV_INSECURE_HOST-<unset>} UV_NO_CACHE=${UV_NO_CACHE-<unset>}"
+} >> "$log"
+
+if [ "${1:-}" = export ]; then
+    output=
+    while [ "$#" -gt 0 ]; do
+        if [ "$1" = --output-file ]; then output=$2; break; fi
+        shift
+    done
+    echo "export-file: $output" >> "$log"
+    if [ -n "${STUB_EXPORT_EMPTY:-}" ]; then
+        echo "# no packages" > "$output"
+    else
+        printf 'example==1.0 \\\n    --hash=sha256:00\n' > "$output"
+    fi
+fi

@@ -99,6 +99,55 @@ assert_eq "pip_install.sh rejects more than one lock file" 2 \
 assert_eq "pip_install.sh with no lock file configures pip and succeeds" 0 \
     "$(in_container "/build-common/pip_install.sh >/dev/null 2>&1; echo \$?")"
 
+echo "== uv_install.sh (stub uv) =="
+
+# Each snippet runs the helper from a fresh project directory holding an empty uv.lock,
+# with the stub uv first on PATH; the stub's log shows what the helper asked uv to do.
+UV_SETUP='cd "$(mktemp -d)" && touch uv.lock && export PATH=/build-common/tests/stub-uv:$PATH STUB_UV_LOG=/tmp/uv.log'
+UV_RUN='/build-common/uv_install.sh /venv'
+
+unset APT_PROXY PYPI_PROXY
+
+assert_eq "uv_install.sh rejects a missing venv directory" 2 \
+    "$(in_container "$UV_SETUP; /build-common/uv_install.sh >/dev/null 2>&1; echo \$?")"
+
+assert_eq "uv_install.sh fails early when uv is not on PATH" 2 \
+    "$(in_container "cd \"\$(mktemp -d)\" && touch uv.lock; $UV_RUN >/dev/null 2>&1; echo \$?")"
+
+assert_eq "uv_install.sh rejects a project directory without uv.lock" 1 \
+    "$(in_container "$UV_SETUP && rm uv.lock; $UV_RUN >/dev/null 2>&1; echo \$?")"
+
+assert_eq "uv_install.sh creates the venv, exports the frozen lock and syncs it" \
+    "args: venv --allow-existing /venv
+args: export --frozen --no-default-groups --format requirements.txt --no-header --output-file EXPORT --no-emit-project
+args: pip sync --python /venv/bin/python EXPORT" \
+    "$(in_container "$UV_SETUP; $UV_RUN --no-emit-project >/dev/null && export_file=\$(sed -n 's/^export-file: //p' /tmp/uv.log) && grep '^args:' /tmp/uv.log | sed \"s|\$export_file|EXPORT|g\"")"
+
+assert_eq "uv_install.sh removes its temporary export file" ABSENT \
+    "$(in_container "$UV_SETUP; $UV_RUN >/dev/null && f=\$(sed -n 's/^export-file: //p' /tmp/uv.log) && [ -n \"\$f\" ] && { [ -e \"\$f\" ] && echo PRESENT || echo ABSENT; }")"
+
+assert_eq "uv_install.sh skips the sync when the export selects no packages" \
+    "0 0" \
+    "$(in_container "$UV_SETUP; STUB_EXPORT_EMPTY=1 $UV_RUN >/dev/null; echo \$? \$(grep -c '^args: pip sync' /tmp/uv.log)")"
+
+assert_eq "uv_install.sh disables the uv cache and sets no index when PYPI_PROXY is unset" \
+    "env: UV_DEFAULT_INDEX=<unset> UV_INSECURE_HOST=<unset> UV_NO_CACHE=1" \
+    "$(in_container "$UV_SETUP; $UV_RUN >/dev/null; grep '^env:' /tmp/uv.log | sort -u")"
+
+export PYPI_PROXY=""
+assert_eq "empty PYPI_PROXY sets no uv index" \
+    "env: UV_DEFAULT_INDEX=<unset> UV_INSECURE_HOST=<unset> UV_NO_CACHE=1" \
+    "$(in_container "$UV_SETUP; $UV_RUN >/dev/null; grep '^env:' /tmp/uv.log | sort -u")"
+
+export PYPI_PROXY="http://192.168.0.4:3141/root/pypi/+simple/"
+assert_eq "set PYPI_PROXY becomes the uv default index with a derived insecure host" \
+    "env: UV_DEFAULT_INDEX=http://192.168.0.4:3141/root/pypi/+simple/ UV_INSECURE_HOST=192.168.0.4 UV_NO_CACHE=1" \
+    "$(in_container "$UV_SETUP; $UV_RUN >/dev/null; grep '^env:' /tmp/uv.log | sort -u")"
+
+assert_eq "uv_install.sh writes no persistent uv configuration" ABSENT \
+    "$(in_container "$UV_SETUP; $UV_RUN >/dev/null; [ -e /etc/uv ] || [ -e \"\$HOME/.config/uv\" ] && echo PRESENT || echo ABSENT")"
+unset PYPI_PROXY
+
 echo
 if [ "$failures" -eq 0 ]; then
     echo "All checks passed."
